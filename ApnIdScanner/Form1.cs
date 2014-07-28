@@ -10,6 +10,7 @@ using System.Net;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
+using System.Collections;
 
 namespace ApnIdScanner
 {
@@ -31,6 +32,21 @@ namespace ApnIdScanner
                     textBox3.AppendText(url + "\r\n");
                 });
             }
+
+            _tmp++;
+            if (_tmp >= _count)
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.BeginInvoke((Action)delegate()
+                    {
+                        button1.Enabled = true;
+                        button1.Text = "开始扫描";
+                        textBox3.AppendText("扫描结束\r\n");
+                    });
+                }
+            }
+
         }
 
 
@@ -56,20 +72,89 @@ namespace ApnIdScanner
 
             public void run(object obj)
             {
-                String url = "http://ib.adnxs.com/ttj?id={0}";
+                String url = "http://ib.adnxs.com/tt?id={0}";
                 url = string.Format(url, _id.ToString());
-                if (GetHTTPPage(url).Length > 0)
+                String html = GetHTTPPage(url);
+                if (html.Length > 0)
                 {
-                    if (onScanResultEvent != null)
+                    url = GetMid(html, "http://", "'");
+                    url = "http://" + url + "&bdref=null&bdtop=true&bdifs=1";
+                    url += "&id" + GetMid(html, "&id", "\"");
+                    html = GetHTTPPage(url);
+
+                    if (html.Length > 0)
                     {
-                        onScanResultEvent(true, _id);
+                        if (onScanResultEvent != null)
+                        {
+                            onScanResultEvent(true, _id);
+                        }
                     }
+                    else
+                    {
+                        if (onScanResultEvent != null)
+                        {
+                            onScanResultEvent(false, _id);
+                        }
+                    }
+                    
                 } 
                 else
                 {
                     if (onScanResultEvent != null)
                     {
                         onScanResultEvent(false, _id);
+                    }
+                }
+            }
+
+            private String GetMid(String input, String s, String e)
+            {
+                int pos = input.IndexOf(s);
+                if (pos == -1)
+                {
+                    return "";
+                }
+
+                pos += s.Length;
+
+                int pos_end = 0;
+                if (e == "")
+                {
+                    pos_end = input.Length;
+                }
+                else
+                {
+                    pos_end = input.IndexOf(e, pos);
+                }
+
+                if (pos_end == -1)
+                {
+                    return "";
+                }
+
+                return input.Substring(pos, pos_end - pos);
+            }
+
+            private CookieContainer CC = new CookieContainer();
+
+            private void BugFix_CookieDomain(CookieContainer cookieContainer)
+            {
+                System.Type _ContainerType = typeof(CookieContainer);
+                Hashtable table = (Hashtable)_ContainerType.InvokeMember("m_domainTable",
+                                           System.Reflection.BindingFlags.NonPublic |
+                                           System.Reflection.BindingFlags.GetField |
+                                           System.Reflection.BindingFlags.Instance,
+                                           null,
+                                           cookieContainer,
+                                           new object[] { });
+                ArrayList keys = new ArrayList(table.Keys);
+                foreach (string keyObj in keys)
+                {
+                    string key = (keyObj as string);
+                    if (key[0] == '.')
+                    {
+                        string newKey = key.Remove(0, 1);
+                        table[newKey] = table[keyObj];
                     }
                 }
             }
@@ -86,8 +171,11 @@ namespace ApnIdScanner
                     request.Timeout = 30000;
                     request.Headers.Add("Accept-Encoding", "gzip, deflate");
                     request.Proxy = null;
+                    request.CookieContainer = CC;
+                    request.KeepAlive = false;
                     request.AllowAutoRedirect = true;
                     response = (HttpWebResponse)request.GetResponse();
+                    BugFix_CookieDomain(CC);
                     if (response.StatusCode == HttpStatusCode.OK && response.ContentLength < 1024 * 1024)
                     {
                         Stream stream = response.GetResponseStream();
@@ -125,18 +213,31 @@ namespace ApnIdScanner
             }
         }
 
+        private int _count = 0; //扫描个数
+        private int _tmp = 0;   //计数器，当前扫描了几个
+
         private void button1_Click(object sender, EventArgs e)
         {
             button1.Enabled = false;
             button1.Text = "扫描中...";
             ThreadPool.SetMaxThreads(150, 512); //最大线程150
+            ServicePointManager.DefaultConnectionLimit = 512;   //HTTP最大并发数  
             int begin = int.Parse(textBox1.Text);
             int end = int.Parse(textBox2.Text);
+            _count = end - begin + 1;
+            _tmp = 0;
             for (int i = begin; i <= end; i++ )
             {
                 scanId scan = new scanId(i, new scanId.scanResultDelegate(scanResult));
                 ThreadPool.QueueUserWorkItem(new WaitCallback(scan.run));
             }
+        }
+
+        private void textBox3_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            String temp = "====扫描范围:" + textBox1.Text + "~" + textBox2.Text + "====\r\n";
+            Clipboard.SetDataObject(temp + textBox3.Text.Replace("扫描结束", ""));
+            MessageBox.Show("已复制到剪切板");
         }
         
     }
